@@ -10,6 +10,7 @@ package org.projecthaystack.server;
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.logging.*;
 import javax.servlet.*;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.*;
@@ -25,16 +26,23 @@ public class HServlet extends HttpServlet
 {
 
 //////////////////////////////////////////////////////////////////////////
-// Database Hook
+// Initialization
 //////////////////////////////////////////////////////////////////////////
 
-  /**
-   * Get the database to use for this servlet.
-   * If not overridden then a test database is created.
-   */
-  public HServer db()
+  @Override
+  public void init() throws ServletException
   {
-    return new org.projecthaystack.server.TestDatabase();
+    logger = Logger.getLogger(this.getClass().getName());
+    logger.setLevel(Level.FINE);
+    final int MEGABYTE_AS_BYTES = 1024 * 1024;
+    try {
+      logger.addHandler(new FileHandler(this.getClass().getSimpleName() + ".log", MEGABYTE_AS_BYTES, 1));
+    }
+    catch (IOException e) {
+      logger.log(Level.WARNING, "Failed to create log file:", e);
+    }
+
+    db = new TestDatabase();
   }
 
 //////////////////////////////////////////////////////////////////////////
@@ -50,7 +58,7 @@ public class HServlet extends HttpServlet
   public void doPost(HttpServletRequest req, HttpServletResponse res)
     throws ServletException, IOException
   {
-    onService("POST", req, res);
+    onService("POST", new CachedBodyHttpServletRequest(req), res);
   }
 
 //////////////////////////////////////////////////////////////////////////
@@ -60,13 +68,12 @@ public class HServlet extends HttpServlet
   private void onService(String method, HttpServletRequest req, HttpServletResponse res)
     throws ServletException, IOException
   {
-    // get the database
-    HServer db = db();
-
+    dumpReq(req);
     // if root, then redirect to {haystack}/about
     String path = req.getPathInfo();
     if (path == null || path.length() == 0 || path.equals("/"))
     {
+      logger.info("Received request for root path, redirecting to '/about'.");
       res.sendRedirect(req.getContextPath() + "/about");
       return;
     }
@@ -80,6 +87,7 @@ public class HServlet extends HttpServlet
     HOp op = db.op(opName, false);
     if (op == null)
     {
+      logger.warning("Invalid op received: " + opName);
       res.sendError(HttpServletResponse.SC_NOT_FOUND);
       return;
     }
@@ -91,7 +99,7 @@ public class HServlet extends HttpServlet
     }
     catch (Exception e)
     {
-      e.printStackTrace();
+      logger.log(Level.WARNING, "Exception while processing op:", e);
       throw new ServletException(e);
     }
   }
@@ -100,29 +108,44 @@ public class HServlet extends HttpServlet
 // Debug
 //////////////////////////////////////////////////////////////////////////
 
-  void dumpReq(HttpServletRequest req) { dumpReq(req, null); }
-  void dumpReq(HttpServletRequest req, PrintWriter out)
+  void dumpReq(HttpServletRequest req)
   {
-    try
-    {
-      if (out == null) out = new PrintWriter(System.out);
-      out.println("==========================================");
-      out.println("method      = " + req.getMethod());
-      out.println("pathInfo    = " + req.getPathInfo());
-      out.println("contextPath = " + req.getContextPath());
-      out.println("servletPath = " + req.getServletPath());
-      out.println("query       = " + (req.getQueryString() == null ? "null" : URLDecoder.decode(req.getQueryString(), "UTF-8")));
-      out.println("headers:");
-      Enumeration e = req.getHeaderNames();
-      while (e.hasMoreElements())
-      {
-        String key = (String)e.nextElement();
-        String val = req.getHeader(key);
-        out.println("  " + key + " = " + val);
-      }
-      out.flush();
+    logger.fine("==========================================");
+    logger.fine("method      = " + req.getMethod());
+    logger.fine("pathInfo    = " + req.getPathInfo());
+    logger.fine("contextPath = " + req.getContextPath());
+    logger.fine("servletPath = " + req.getServletPath());
+    try {
+      logger.fine("query       = " + (req.getQueryString() == null ? "null" : URLDecoder.decode(req.getQueryString(), "UTF-8")));
     }
-    catch (Exception e) { e.printStackTrace(); }
+    catch (UnsupportedEncodingException e) {
+      logger.log(Level.WARNING, "Failed to decode query string:", e);
+    }
+
+    logger.fine("headers:");
+    Enumeration<String> e = req.getHeaderNames();
+    while (e.hasMoreElements())
+    {
+      String key = e.nextElement();
+      String val = req.getHeader(key);
+      logger.fine("  " + key + " = " + val);
+    }
+
+    if (req.getMethod().equals("POST")) {
+      logger.fine("body:");
+      try {
+        BufferedReader reader = req.getReader();
+        String line = null;
+        while ((line = reader.readLine()) != null) {
+          logger.fine("  " + line);
+        }
+      }
+      catch (Exception ex) {
+        logger.log(Level.WARNING, "Exception while trying to log POST body:", ex);
+      }
+    }
   }
 
+  private HServer db;
+  private Logger logger;
 }

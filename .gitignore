@@ -11,3 +11,8 @@ build/
 # misc
 Thumbs.db
 .DS_Store
+
+bin/
+.classpath
+.project
+.settings/

@@ -7,9 +7,11 @@
 //
 package org.projecthaystack.server;
 
-import java.net.*;
+import java.io.*;
 import java.util.*;
+import java.util.logging.*;
 import org.projecthaystack.*;
+import org.projecthaystack.io.*;
 
 /**
  * TestDatabase provides a simple implementation of
@@ -24,79 +26,34 @@ public class TestDatabase extends HServer
 
   public TestDatabase()
   {
-    addSite("A", "Richmond",   "VA", 1000);
-    addSite("B", "Richmond",   "VA", 2000);
-    addSite("C", "Washington", "DC", 3000);
-    addSite("D", "Boston",     "MA", 4000);
-  }
+    logger = Logger.getLogger(this.getClass().getName());
+    logger.setLevel(Level.INFO);
+    final int MEGABYTE_AS_BYTES = 1024 * 1024;
+    try {
+      logger.addHandler(new FileHandler(this.getClass().getSimpleName() + ".log", MEGABYTE_AS_BYTES, 1));
+    }
+    catch (IOException e) {
+      logger.log(Level.WARNING, "Failed to create log file:", e);
+    }
 
-  private void addSite(String dis, String geoCity, String geoState, int area)
-  {
-    HDict site = new HDictBuilder()
-      .add("id",       HRef.make(dis))
-      .add("dis",      dis)
-      .add("site",     HMarker.VAL)
-      .add("geoCity",  geoCity)
-      .add("geoState", geoState)
-      .add("geoAddr",  "" +geoCity + "," + geoState)
-      .add("tz",       "New_York")
-      .add("area",     HNum.make(area, "ft\u00B2"))
-      .toDict();
-    recs.put(dis, site);
+    final String zincFile = "/usr/local/tomcat/alpha.zinc";
+    try {
+      HZincReader gridReader = new HZincReader(new FileInputStream(zincFile));
+      logger.info("Grid file '" + zincFile + "' loaded.");
+      HGrid grid = gridReader.readGrid();
+      logger.info("Grid file '" + zincFile + "' parsed.");
+      logger.info("Grid metadata: " + grid.meta().toString());
 
-    addMeter(site, dis+"-Meter");
-    addAhu(site,   dis+"-AHU1");
-    addAhu(site,   dis+"-AHU2");
-  }
+      for (Iterator it = grid.iterator(); it.hasNext();) {
+        HDict row = (HDict)it.next();
+        recs.put(row.id().val, row);
+      }
 
-  private void addMeter(HDict site, String dis)
-  {
-    HDict equip = new HDictBuilder()
-      .add("id",       HRef.make(dis))
-      .add("dis",      dis)
-      .add("equip",     HMarker.VAL)
-      .add("elecMeter", HMarker.VAL)
-      .add("siteMeter", HMarker.VAL)
-      .add("siteRef",   site.get("id"))
-      .toDict();
-    recs.put(dis, equip);
-    addPoint(equip, dis+"-KW",  "kW",  "elecKw");
-    addPoint(equip, dis+"-KWH", "kWh", "elecKwh");
-  }
-
-  private void addAhu(HDict site, String dis)
-  {
-    HDict equip = new HDictBuilder()
-      .add("id",      HRef.make(dis))
-      .add("dis",     dis)
-      .add("equip",   HMarker.VAL)
-      .add("ahu",     HMarker.VAL)
-      .add("siteRef", site.get("id"))
-      .toDict();
-    recs.put(dis, equip);
-    addPoint(equip, dis+"-Fan",    null,      "discharge air fan cmd");
-    addPoint(equip, dis+"-Cool",   null,      "cool cmd");
-    addPoint(equip, dis+"-Heat",   null,      "heat cmd");
-    addPoint(equip, dis+"-DTemp",  "\u00B0F", "discharge air temp sensor");
-    addPoint(equip, dis+"-RTemp",  "\u00B0F", "return air temp sensor");
-    addPoint(equip, dis+"-ZoneSP", "\u00B0F", "zone air temp sp writable");
-  }
-
-  private void addPoint(HDict equip, String dis, String unit, String markers)
-  {
-    HDictBuilder b = new HDictBuilder()
-      .add("id",       HRef.make(dis))
-      .add("dis",      dis)
-      .add("point",    HMarker.VAL)
-      .add("his",      HMarker.VAL)
-      .add("siteRef",  equip.get("siteRef"))
-      .add("equipRef", equip.get("id"))
-      .add("kind",     unit == null ? "Bool" : "Number")
-      .add("tz",       "New_York");
-    if (unit != null) b.add("unit", unit);
-    StringTokenizer st = new StringTokenizer(markers);
-    while (st.hasMoreTokens()) b.add(st.nextToken());
-    recs.put(dis, b.toDict());
+      logger.info("Loaded " + String.valueOf(recs.size()) + " rows.");
+    }
+    catch (FileNotFoundException e) {
+      logger.severe("File '" + zincFile + "' not found.");
+    }
   }
 
 //////////////////////////////////////////////////////////////////////////
@@ -119,7 +76,7 @@ public class TestDatabase extends HServer
 
   public HDict onAbout() { return about; }
   private final HDict about = new HDictBuilder()
-    .add("serverName",  hostName())
+    .add("serverName",  "Pametan Test Haystack Server")
     .add("vendorName", "Haystack Java Toolkit")
     .add("vendorUri", HUri.make("http://project-haystack.org/"))
     .add("productName", "Haystack Java Toolkit")
@@ -127,19 +84,13 @@ public class TestDatabase extends HServer
     .add("productUri", HUri.make("http://project-haystack.org/"))
     .toDict();
 
-  private static String hostName()
-  {
-    try { return InetAddress.getLocalHost().getHostName(); }
-    catch (Exception e) { return "Unknown"; }
-  }
-
 //////////////////////////////////////////////////////////////////////////
 // Reads
 //////////////////////////////////////////////////////////////////////////
 
   protected HDict onReadById(HRef id) { return (HDict)recs.get(id.val); }
 
-  protected Iterator iterator() { return recs.values().iterator(); }
+  protected Iterator<HDict> iterator() { return recs.values().iterator(); }
 
 //////////////////////////////////////////////////////////////////////////
 // Navigation
@@ -223,7 +174,7 @@ public class TestDatabase extends HServer
 
   protected void onPointWrite(HDict rec, int level, HVal val, String who, HNum dur, HDict opts)
   {
-    System.out.println("onPointWrite: " + rec.dis() + "  " + val + " @ " + level + " [" + who + "]");
+    logger.info("onPointWrite: " + rec.dis() + "  " + val + " @ " + level + " [" + who + "]");
     WriteArray array = (WriteArray)writeArrays.get(rec.id());
     if (array == null) writeArrays.put(rec.id(), array = new WriteArray());
     array.val[level-1] = val;
@@ -272,7 +223,7 @@ public class TestDatabase extends HServer
 
   public HGrid onInvokeAction(HDict rec, String action, HDict args)
   {
-    System.out.println("-- invokeAction \"" + rec.dis() + "." + action + "\" " + args);
+    logger.info("-- invokeAction \"" + rec.dis() + "." + action + "\" " + args);
     return HGrid.EMPTY;
   }
 
@@ -280,5 +231,6 @@ public class TestDatabase extends HServer
 // Fields
 //////////////////////////////////////////////////////////////////////////
 
-  HashMap recs = new HashMap();
+  private Logger logger;
+  private HashMap<String, HDict> recs = new HashMap<String, HDict>();
 }
